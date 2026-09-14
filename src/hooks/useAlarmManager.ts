@@ -13,6 +13,7 @@ export interface UseAlarmManagerReturn {
   snoozeAlarm: (activityId: string, minutes?: number) => void;
   markCompletedAndDismiss: (activityId: string) => void;
   testAlarmSound: (type: Activity['alarm']['soundType'], volume?: number, customAudioId?: string) => void;
+  triggerTestSimulation: (soundType: Activity['alarm']['soundType'], volume?: number, customAudioId?: string) => void;
   requestNotificationPermission: () => Promise<boolean>;
   notificationsAllowed: boolean;
 }
@@ -225,12 +226,77 @@ export function useAlarmManager(
     []
   );
 
+  const triggerTestSimulation = useCallback(
+    (soundType: Activity['alarm']['soundType'], volume: number = 0.85, customAudioId?: string) => {
+      unlockAudioContext();
+      const testActivity: Activity = {
+        id: 'test_transient_' + Date.now(),
+        title: 'Teste de Alarme Sonoro',
+        description: 'Demonstração do som, vibração e controles de mídia/notificação.',
+        date: new Date().toISOString().split('T')[0],
+        startTime: 'Agora',
+        endTime: '',
+        category: 'Outro',
+        priority: 'alta',
+        status: 'pendente',
+        alarm: {
+          enabled: true,
+          soundType,
+          customAudioId,
+          volume,
+          triggerOffsetMinutes: 0,
+        },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      setActiveAlarmActivity(testActivity);
+
+      startContinuousAlarm({
+        type: soundType,
+        volume,
+        customAudioId,
+        title: testActivity.title,
+        category: testActivity.category,
+        onStop: () => {
+          stopContinuousAlarm();
+          setActiveAlarmActivity(null);
+        },
+        onSnooze: () => {
+          stopContinuousAlarm();
+          setActiveAlarmActivity(null);
+        },
+      });
+
+      if ('Notification' in window && Notification.permission === 'granted') {
+        try {
+          const notifOptions: any = {
+            body: '⏰ Toque para responder ao alarme (Parar ou Adiar)',
+            icon: '/icon-192.png',
+            tag: 'alarm-test',
+            requireInteraction: true,
+            vibrate: [500, 250, 500, 250, 500],
+            actions: [
+              { action: 'stop', title: '⏹ Parar' },
+              { action: 'snooze', title: '⏱ Adiar 5m' },
+            ],
+          };
+          new Notification('⏰ TESTE DE ALARME', notifOptions);
+        } catch {
+          // ignore
+        }
+      }
+    },
+    []
+  );
+
   return {
     activeAlarmActivity,
     dismissAlarm,
     snoozeAlarm,
     markCompletedAndDismiss,
     testAlarmSound,
+    triggerTestSimulation,
     requestNotificationPermission,
     notificationsAllowed,
   };

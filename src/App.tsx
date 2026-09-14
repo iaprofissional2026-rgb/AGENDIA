@@ -12,6 +12,8 @@ import {
   initAuth,
   googleSignIn,
   logoutGoogle,
+  getAccessToken,
+  loadCachedAccessToken,
 } from './services/firebaseAuth';
 import {
   listGoogleCalendarEvents,
@@ -34,6 +36,9 @@ function AppContent() {
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [googleEvents, setGoogleEvents] = useState<GoogleCalendarEvent[]>([]);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [isOnline, setIsOnline] = useState<boolean>(() =>
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
 
   // Modals state
   const [isActivityModalOpen, setIsActivityModalOpen] = useState<boolean>(false);
@@ -80,12 +85,14 @@ function AppContent() {
     snoozeAlarm,
     markCompletedAndDismiss,
     testAlarmSound,
+    triggerTestSimulation,
     requestNotificationPermission,
     notificationsAllowed,
   } = useAlarmManager(activities, handleUpdateActivity);
 
   // Sync Google Calendar events
   const fetchGoogleEvents = useCallback(async (token: string) => {
+    if (!navigator.onLine) return;
     setIsSyncing(true);
     try {
       const now = new Date();
@@ -105,7 +112,77 @@ function AppContent() {
     }
   }, []);
 
-  // Init Firebase Auth
+  // Sync any pending activities when online
+  const syncPendingActivities = useCallback(async (token: string) => {
+    if (!navigator.onLine) return;
+    setActivities((prev) => {
+      const pending = prev.filter((a) => a.syncPending);
+      if (pending.length === 0) return prev;
+
+      (async () => {
+        let updatedCount = 0;
+        const updatedList = [...prev];
+        for (const act of pending) {
+          try {
+            const evt = await createGoogleCalendarEvent(token, act);
+            if (evt) {
+              const idx = updatedList.findIndex((item) => item.id === act.id);
+              if (idx !== -1) {
+                updatedList[idx] = {
+                  ...updatedList[idx],
+                  googleCalendarEventId: evt.id,
+                  googleCalendarLink: evt.htmlLink,
+                  syncPending: false,
+                  updatedAt: Date.now(),
+                };
+                updatedCount++;
+              }
+            }
+          } catch {
+            // will retry next sync
+          }
+        }
+        if (updatedCount > 0) {
+          setActivities(updatedList);
+          saveActivities(updatedList);
+          showToast(`${updatedCount} atividade(s) sincronizada(s) com o Google Calendar!`, 'success');
+        }
+      })();
+
+      return prev;
+    });
+  }, [showToast]);
+
+  // Online / Offline Detection
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      showToast('Conexão restabelecida! Online e sincronizado.', 'success');
+      const token = loadCachedAccessToken();
+      if (token) {
+        fetchGoogleEvents(token);
+        syncPendingActivities(token);
+      }
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+      showToast(
+        'Você está offline. O aplicativo, temas, músicas e alarmes continuam funcionando 100% no seu aparelho.',
+        'info'
+      );
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [fetchGoogleEvents, syncPendingActivities, showToast]);
+
+  // Init Firebase Auth (with offline support)
   useEffect(() => {
     const unsubscribe = initAuth(
       async (user, token) => {
@@ -115,8 +192,9 @@ function AppContent() {
           email: user.email,
           photoURL: user.photoURL,
         });
-        if (token) {
+        if (token && navigator.onLine) {
           fetchGoogleEvents(token);
+          syncPendingActivities(token);
         }
       },
       () => {
@@ -125,7 +203,7 @@ function AppContent() {
       }
     );
     return () => unsubscribe();
-  }, [fetchGoogleEvents]);
+  }, [fetchGoogleEvents, syncPendingActivities]);
 
   // Request notifications and unlock audio on initial user touch
   useEffect(() => {
@@ -147,28 +225,37 @@ function AppContent() {
 
   // Manual Google Calendar Login
   const handleLoginGoogle = async () => {
+    if (!navigator.onLine) {
+      showToast(
+        'Você está offline no momento. Conecte-se à internet para realizar o primeiro login com a conta Google.',
+        'info'
+      );
+      return;
+    }
     setIsLoggingIn(true);
     try {
-      const { user, accessToken } = await googleSignIn();
-      setUserProfile({
-        uid: user.uid,
-        displayName: user.displayName,
-        email: user.email,
-        photoURL: user.photoURL,
-      });
+      const result = await googleSignIn();
+      if (!result) {
+        // User closed popup
+        return;
+      }
+      const { user, accessToken, profile } = result;
+      setUserProfile(profile);
       if (accessToken) {
         await fetchGoogleEvents(accessToken);
+        await syncPendingActivities(accessToken);
       }
-      showToast('Conectado com sucesso ao Google Calendar!', 'success');
+      showToast(`Bem-vindo, ${profile.displayName || profile.email || 'Usuário'}! Login realizado com sucesso.`, 'success');
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       if (
         errorMessage.includes('auth/popup-closed-by-user') ||
-        errorMessage.includes('popup-closed')
+        errorMessage.includes('popup-closed') ||
+        errorMessage.includes('cancelled-popup-request')
       ) {
-        showToast('Login cancelado pelo usuário.', 'info');
+        // User closed the popup, silent
       } else {
-        showToast(`Erro ao autenticar no Google Calendar: ${errorMessage}`, 'error');
+        showToast(`Erro ao autenticar com o Google: ${errorMessage}`, 'error');
       }
     } finally {
       setIsLoggingIn(false);
@@ -442,37 +529,14 @@ function AppContent() {
     setIsActivityModalOpen(true);
   };
 
-  // Trigger test simulation
+  // Trigger test simulation without creating fake activities
   const handleTriggerTestAlarm = (
     soundType: AlarmSoundType,
     volume: number,
     customAudioId?: string
   ) => {
     setIsAlarmSettingsOpen(false);
-    const sampleActivity: Activity = {
-      id: 'test_simulation_' + Date.now(),
-      title: 'Teste de Alarme Sonoro',
-      description: 'Demonstração do disparo do alarme com barra de notificação Android e música.',
-      date: new Date().toISOString().split('T')[0],
-      startTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      endTime: '',
-      category: 'Lazer',
-      priority: 'alta',
-      status: 'pendente',
-      alarm: {
-        enabled: true,
-        soundType,
-        customAudioId,
-        customAudioName: customAudioId ? 'Música do Celular' : undefined,
-        volume,
-        triggerOffsetMinutes: 0,
-      },
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-
-    testAlarmSound(soundType, volume, customAudioId);
-    handleUpdateActivity(sampleActivity);
+    triggerTestSimulation(soundType, volume, customAudioId);
   };
 
   return (
@@ -485,18 +549,31 @@ function AppContent() {
       <Navbar
         userProfile={userProfile}
         isLoggingIn={isLoggingIn}
+        isOnline={isOnline}
         onLoginGoogle={handleLoginGoogle}
         onLogoutGoogle={handleLogoutGoogle}
         onOpenNewActivityModal={handleOpenNewModal}
         onOpenAlarmSettings={() => setIsAlarmSettingsOpen(true)}
         onSyncGoogleCalendar={handleManualSync}
-        onOpenPwaModal={() => setIsPwaModalOpen(true)}
         isSyncing={isSyncing}
         activitiesCount={activities.length}
       />
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-2.5 sm:px-4 lg:px-8 py-3.5 sm:py-5">
+        {/* Offline notification banner if offline */}
+        {!isOnline && (
+          <div className="mb-3 p-2.5 sm:p-3 rounded-xl bg-amber-950/40 border border-amber-500/30 text-amber-200 text-xs flex items-center justify-between shadow-sm">
+            <div className="flex items-center space-x-2">
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0" />
+              <span>
+                <strong>Modo Offline Ativo:</strong> Suas atividades, horários e alarmes continuam tocando normalmente no aparelho.
+                {userProfile && ' Sua conta Google continua conectada localmente.'}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Unlocked audio banner if needed */}
         {!audioUnlocked && (
           <div className="mb-3 p-2.5 sm:p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 text-xs flex items-center justify-between shadow-sm">
@@ -539,14 +616,6 @@ function AppContent() {
       <footer className="bg-slate-950 border-t border-slate-800/80 py-3 text-center text-xs text-slate-500">
         <p className="max-w-7xl mx-auto px-4 flex flex-wrap items-center justify-center gap-2">
           <span>Agendador de Atividades Pro</span>
-          <span>•</span>
-          <button
-            type="button"
-            onClick={() => setIsPwaModalOpen(true)}
-            className="text-amber-400 hover:underline cursor-pointer"
-          >
-            Instalar no Celular / APK
-          </button>
           <span>•</span>
           <span>Google Calendar API & Sintetizador de Alarme</span>
         </p>

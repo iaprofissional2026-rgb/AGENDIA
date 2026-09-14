@@ -369,10 +369,24 @@ export const CalendarTimeline: React.FC<CalendarTimelineProps> = ({
           </div>
 
           <div className="p-3 sm:p-4">
-            {googleEvents.length === 0 ? (
+            {!isGoogleConnected ? (
               <div className="text-center py-8">
-                <p className="text-xs text-slate-400">
-                  Nenhum evento futuro encontrado no seu Google Calendar para o período.
+                <p className="text-xs text-slate-300 font-medium">
+                  Conta Google não conectada
+                </p>
+                <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+                  Clique no botão &quot;Entrar com Google&quot; no topo da tela para sincronizar seus compromissos da agenda Google.
+                </p>
+              </div>
+            ) : googleEvents.length === 0 ? (
+              <div className="text-center py-8">
+                <p className="text-xs text-slate-300 font-medium">
+                  {typeof navigator !== 'undefined' && !navigator.onLine
+                    ? 'Modo Offline: Eventos do Google Calendar serão atualizados ao reconectar.'
+                    : 'Nenhum evento encontrado no seu Google Calendar para os próximos 30 dias.'}
+                </p>
+                <p className="text-xs text-slate-400 mt-1">
+                  Você pode agendar atividades manuais a qualquer momento clicando em &quot;Agendar&quot;.
                 </p>
               </div>
             ) : (

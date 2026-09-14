@@ -44,6 +44,7 @@ export interface Activity {
   googleCalendarEventId?: string;
   googleCalendarSync?: boolean;
   googleCalendarLink?: string;
+  syncPending?: boolean;
   createdAt: number;
   updatedAt: number;
 }
