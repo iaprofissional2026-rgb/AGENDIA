@@ -1,0 +1,6 @@
+{
+  "name": "Agendador de Atividades",
+  "description": "Aplicativo completo para agendamento de atividades com alarme sonoro configurável e integração com o Google Calendar.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
