@@ -1,12 +1,19 @@
-import { AlarmSoundType } from '../types';
+import { AlarmSoundType, BuiltInSoundType } from '../types';
+import { getTrackAudioUrl } from './customAudioService';
 
 let audioCtx: AudioContext | null = null;
 let currentAlarmInterval: number | null = null;
+let currentVibrationInterval: number | null = null;
+let activeAudioElement: HTMLAudioElement | null = null;
 let isAlarmCurrentlyPlaying = false;
+
+// 1-second silent WAV data URI used as an audio carrier so Android shows the native Media Notification Bar
+const SILENT_AUDIO_URI = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
 
 function getAudioContext(): AudioContext {
   if (!audioCtx) {
-    const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const AudioContextClass =
+      window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     audioCtx = new AudioContextClass();
   }
   if (audioCtx.state === 'suspended') {
@@ -29,10 +36,22 @@ export function unlockAudioContext(): void {
 /**
  * Play a single sequence of the chosen sound type
  */
-export function playSound(type: AlarmSoundType, volume: number = 0.8): void {
+export function playSound(type: AlarmSoundType, volume: number = 0.8, customAudioId?: string): void {
+  const clampedVol = Math.max(0.01, Math.min(1, volume));
+
+  if (type === 'custom' && customAudioId) {
+    getTrackAudioUrl(customAudioId).then((url) => {
+      if (url) {
+        const tempAudio = new Audio(url);
+        tempAudio.volume = clampedVol;
+        tempAudio.play().catch((err) => console.warn('Falha ao tocar música personalizada:', err));
+      }
+    });
+    return;
+  }
+
   try {
     const ctx = getAudioContext();
-    const clampedVol = Math.max(0.01, Math.min(1, volume));
     const now = ctx.currentTime;
 
     const masterGain = ctx.createGain();
@@ -165,26 +184,133 @@ export function playSound(type: AlarmSoundType, volume: number = 0.8): void {
       }
     }
   } catch (err) {
-    console.error('Error playing sound:', err);
+    console.warn('Error playing sound:', err);
   }
 }
 
+export interface ContinuousAlarmOptions {
+  type: AlarmSoundType;
+  volume?: number;
+  customAudioId?: string;
+  title?: string;
+  category?: string;
+  onStop?: () => void;
+  onSnooze?: () => void;
+}
+
 /**
- * Start repeating loop for an active alarm until stopped
+ * Start continuous alarm with Android Notification Bar & Lock Screen Media Player integration
  */
-export function startContinuousAlarm(type: AlarmSoundType, volume: number = 0.9): () => void {
+export function startContinuousAlarm(
+  optionsOrType: AlarmSoundType | ContinuousAlarmOptions,
+  legacyVolume: number = 0.9
+): () => void {
   stopContinuousAlarm();
   unlockAudioContext();
   isAlarmCurrentlyPlaying = true;
 
-  // Play immediately
-  playSound(type, volume);
+  const options: ContinuousAlarmOptions =
+    typeof optionsOrType === 'string'
+      ? { type: optionsOrType, volume: legacyVolume }
+      : optionsOrType;
 
-  const loopIntervalMs = type === 'gong' ? 2600 : type === 'chime' ? 1800 : 1200;
+  const vol = Math.max(0.05, Math.min(1, options.volume ?? 0.85));
 
-  currentAlarmInterval = window.setInterval(() => {
-    playSound(type, volume);
-  }, loopIntervalMs);
+  // 1. Android Notification Bar Media Player Setup via MediaSession API
+  const setupMediaSession = (streamElement: HTMLAudioElement) => {
+    if ('mediaSession' in navigator) {
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: `⏰ ALARME: ${options.title || 'Atividade Agendada'}`,
+          artist: 'Agendador de Atividades (Alarme Ativo)',
+          album: options.category || 'Alarme Sonoro',
+          artwork: [
+            { src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png' },
+            { src: '/pwa-512x512.png', sizes: '512x512', type: 'image/png' },
+          ],
+        });
+
+        navigator.mediaSession.playbackState = 'playing';
+
+        const handleStop = () => {
+          stopContinuousAlarm();
+          options.onStop?.();
+        };
+
+        const handleSnooze = () => {
+          stopContinuousAlarm();
+          options.onSnooze?.();
+        };
+
+        navigator.mediaSession.setActionHandler('stop', handleStop);
+        navigator.mediaSession.setActionHandler('pause', handleStop);
+        navigator.mediaSession.setActionHandler('nexttrack', handleSnooze);
+        navigator.mediaSession.setActionHandler('previoustrack', handleSnooze);
+      } catch (e) {
+        console.warn('Erro ao configurar MediaSession no Android:', e);
+      }
+    }
+  };
+
+  // 2. Physical device vibration pattern
+  const triggerVibration = () => {
+    if ('vibrate' in navigator) {
+      try {
+        navigator.vibrate([600, 300, 600, 300, 600, 300, 1000]);
+      } catch (e) {
+        console.warn('Vibration error:', e);
+      }
+    }
+  };
+
+  triggerVibration();
+  currentVibrationInterval = window.setInterval(triggerVibration, 3700);
+
+  // 3. Audio playback (Custom Phone Music OR Synthetic Tone + Silent Carrier)
+  if (options.type === 'custom' && options.customAudioId) {
+    getTrackAudioUrl(options.customAudioId).then((url) => {
+      if (!isAlarmCurrentlyPlaying) return;
+      if (url) {
+        const audio = new Audio(url);
+        audio.loop = true;
+        audio.volume = vol;
+        activeAudioElement = audio;
+
+        setupMediaSession(audio);
+
+        audio.play().catch((e) => {
+          console.warn('Reprodução de áudio customizado bloqueada, usando sintetizador fallback:', e);
+          playSound('urgent', vol);
+        });
+      } else {
+        // Fallback to digital beep
+        playSound('digital', vol);
+      }
+    });
+  } else {
+    // Synthetic sound loop
+    playSound(options.type, vol);
+
+    const loopIntervalMs = options.type === 'gong' ? 2600 : options.type === 'chime' ? 1800 : 1200;
+
+    currentAlarmInterval = window.setInterval(() => {
+      if (isAlarmCurrentlyPlaying) {
+        playSound(options.type, vol);
+      }
+    }, loopIntervalMs);
+
+    // Active carrier audio element to trigger Android lockscreen & notification media bar
+    try {
+      const carrier = new Audio(SILENT_AUDIO_URI);
+      carrier.loop = true;
+      carrier.volume = 0.01;
+      activeAudioElement = carrier;
+      setupMediaSession(carrier);
+      carrier.play().catch(() => {});
+    } catch {
+      // Ignore background audio carrier failures
+    }
+  }
 
   return stopContinuousAlarm;
 }
@@ -194,6 +320,39 @@ export function stopContinuousAlarm(): void {
     clearInterval(currentAlarmInterval);
     currentAlarmInterval = null;
   }
+
+  if (currentVibrationInterval !== null) {
+    clearInterval(currentVibrationInterval);
+    currentVibrationInterval = null;
+  }
+
+  if ('vibrate' in navigator) {
+    try {
+      navigator.vibrate(0);
+    } catch {
+      // Ignore
+    }
+  }
+
+  if (activeAudioElement) {
+    try {
+      activeAudioElement.pause();
+      activeAudioElement.currentTime = 0;
+      activeAudioElement.src = '';
+    } catch {
+      // Ignore
+    }
+    activeAudioElement = null;
+  }
+
+  if ('mediaSession' in navigator) {
+    try {
+      navigator.mediaSession.playbackState = 'none';
+    } catch {
+      // Ignore
+    }
+  }
+
   isAlarmCurrentlyPlaying = false;
 }
 
@@ -226,5 +385,10 @@ export const SOUND_LABELS: Record<AlarmSoundType, { name: string; description: s
     name: 'Gongo Suave',
     description: 'Ressonância profunda e tranquila',
     icon: 'Disc',
+  },
+  custom: {
+    name: 'Música do Celular',
+    description: 'Arquivo de áudio próprio do seu dispositivo',
+    icon: 'FolderMusic',
   },
 };

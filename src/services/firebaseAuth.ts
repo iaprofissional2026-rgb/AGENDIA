@@ -58,8 +58,38 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string;
     };
 
     return { user: result.user, accessToken: cachedAccessToken, profile };
-  } catch (error: unknown) {
-    console.error('Erro ao conectar com Google Calendar:', error);
+  } catch (error: any) {
+    const errorCode = error?.code || '';
+    const errorMessage = String(error?.message || '');
+
+    // User closed the popup window or clicked cancel
+    if (
+      errorCode === 'auth/popup-closed-by-user' ||
+      errorMessage.includes('auth/popup-closed-by-user') ||
+      errorCode === 'auth/cancelled-popup-request' ||
+      errorMessage.includes('auth/cancelled-popup-request')
+    ) {
+      // Normal user dismissal, return null cleanly without throwing
+      return null;
+    }
+
+    // Popup was blocked by browser
+    if (
+      errorCode === 'auth/popup-blocked' ||
+      errorMessage.includes('auth/popup-blocked')
+    ) {
+      throw new Error('A janela pop-up foi bloqueada pelo navegador. Permita pop-ups para conectar com o Google Calendar.');
+    }
+
+    // Network request error
+    if (
+      errorCode === 'auth/network-request-failed' ||
+      errorMessage.includes('network-request-failed')
+    ) {
+      throw new Error('Falha de conexão com a rede. Verifique sua conexão e tente novamente.');
+    }
+
+    console.warn('Aviso de autenticação com Google Calendar:', error);
     throw error;
   } finally {
     isSigningIn = false;

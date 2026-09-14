@@ -9,7 +9,7 @@ import {
   Trash2,
   ExternalLink,
   Play,
-  Volume2,
+  Music,
 } from 'lucide-react';
 import { Activity, CategoryType } from '../types';
 import { SOUND_LABELS } from '../services/soundService';
@@ -19,16 +19,16 @@ interface ActivityCardProps {
   onToggleStatus: (activity: Activity) => void;
   onEdit: (activity: Activity) => void;
   onDelete: (activity: Activity) => void;
-  onTestSound: (soundType: Activity['alarm']['soundType'], volume?: number) => void;
+  onTestSound: (soundType: Activity['alarm']['soundType'], volume?: number, customAudioId?: string) => void;
 }
 
 const CATEGORY_STYLES: Record<CategoryType, { bg: string; text: string; border: string }> = {
-  Trabalho: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
-  Estudo: { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200' },
-  Saúde: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' },
-  Lazer: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
-  Pessoal: { bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-200' },
-  Outro: { bg: 'bg-slate-50', text: 'text-slate-700', border: 'border-slate-200' },
+  Trabalho: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/30' },
+  Estudo: { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/30' },
+  Saúde: { bg: 'bg-emerald-500/10', text: 'text-emerald-400', border: 'border-emerald-500/30' },
+  Lazer: { bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/30' },
+  Pessoal: { bg: 'bg-rose-500/10', text: 'text-rose-400', border: 'border-rose-500/30' },
+  Outro: { bg: 'bg-slate-500/10', text: 'text-slate-400', border: 'border-slate-500/30' },
 };
 
 export const ActivityCard: React.FC<ActivityCardProps> = ({
@@ -40,7 +40,11 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
 }) => {
   const isDone = activity.status === 'concluida';
   const categoryStyle = CATEGORY_STYLES[activity.category] || CATEGORY_STYLES.Outro;
-  const soundLabel = SOUND_LABELS[activity.alarm.soundType]?.name || 'Alarme';
+  
+  const isCustom = activity.alarm.soundType === 'custom';
+  const soundLabel = isCustom
+    ? activity.alarm.customAudioName || 'Música do Celular'
+    : SOUND_LABELS[activity.alarm.soundType]?.name || 'Alarme';
 
   const formatOffset = (mins: number) => {
     if (mins === 0) return 'No horário';
@@ -50,21 +54,22 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
 
   return (
     <div
-      className={`group relative bg-white rounded-xl border transition-all duration-200 p-3 sm:p-4 hover:shadow-md ${
+      className={`group relative rounded-xl border transition-all duration-200 p-3 sm:p-3.5 ${
         isDone
-          ? 'border-slate-200 bg-slate-50/50 opacity-75'
-          : 'border-slate-200 hover:border-slate-300'
+          ? 'border-slate-800 bg-slate-900/40 opacity-70'
+          : 'border-slate-800/80 bg-slate-900/90 hover:border-slate-700 shadow-sm'
       }`}
     >
       <div className="flex items-start justify-between gap-2.5">
         {/* Checkbox status toggle */}
         <button
+          type="button"
           onClick={() => onToggleStatus(activity)}
           title={isDone ? 'Reabrir atividade' : 'Marcar como concluída'}
-          className="mt-0.5 text-slate-400 hover:text-emerald-600 transition-colors shrink-0 p-0.5"
+          className="mt-0.5 text-slate-500 hover:text-emerald-400 transition-colors shrink-0 p-0.5 cursor-pointer"
         >
           {isDone ? (
-            <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+            <CheckCircle2 className="w-5 h-5 text-emerald-400" />
           ) : (
             <Circle className="w-5 h-5 hover:scale-110 transition-transform" />
           )}
@@ -84,10 +89,10 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
             <span
               className={`inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-medium ${
                 activity.priority === 'alta'
-                  ? 'text-rose-600'
+                  ? 'text-rose-400'
                   : activity.priority === 'media'
-                  ? 'text-amber-600'
-                  : 'text-emerald-600'
+                  ? 'text-amber-400'
+                  : 'text-emerald-400'
               }`}
             >
               <span
@@ -106,7 +111,7 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
             {activity.googleCalendarEventId && (
               <span
                 title="Sincronizado com Google Calendar"
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] sm:text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-200"
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] sm:text-[10px] font-medium bg-blue-500/10 text-blue-300 border border-blue-500/30"
               >
                 <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3" viewBox="0 0 48 48">
                   <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
@@ -131,7 +136,7 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
           </div>
 
           <h3
-            className={`text-xs sm:text-sm font-bold text-slate-900 leading-snug break-words ${
+            className={`text-xs sm:text-sm font-bold text-slate-100 leading-snug break-words ${
               isDone ? 'line-through text-slate-500' : ''
             }`}
           >
@@ -139,42 +144,47 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
           </h3>
 
           {activity.description && (
-            <p className="text-[11px] sm:text-xs text-slate-600 mt-0.5 sm:mt-1 line-clamp-2 break-words">
+            <p className="text-[11px] text-slate-400 mt-0.5 sm:mt-1 line-clamp-2 break-words">
               {activity.description}
             </p>
           )}
 
           {/* Time & Alarm info footer */}
-          <div className="flex items-center flex-wrap gap-x-2 sm:gap-x-4 gap-y-1 mt-2 pt-2 border-t border-slate-100 text-[11px] sm:text-xs text-slate-600">
+          <div className="flex items-center flex-wrap gap-x-2 sm:gap-x-3 gap-y-1 mt-2 pt-1.5 border-t border-slate-800 text-[11px] text-slate-400">
             {/* Schedule time */}
-            <span className="inline-flex items-center gap-1 font-medium text-slate-700">
-              <Clock className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400" />
+            <span className="inline-flex items-center gap-1 font-medium text-slate-300">
+              <Clock className="w-3 h-3 text-slate-500" />
               {activity.startTime} {activity.endTime ? `- ${activity.endTime}` : ''}
             </span>
 
             {/* Alarm indicator */}
             {activity.alarm.enabled ? (
-              <div className="inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-md bg-indigo-50/80 text-indigo-700 text-[10px] sm:text-[11px] font-medium border border-indigo-100">
-                <Bell className="w-3 h-3 text-indigo-600 shrink-0" />
-                <span className="truncate max-w-[120px] sm:max-w-none">{soundLabel} ({formatOffset(activity.alarm.triggerOffsetMinutes)})</span>
+              <div className="inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-md bg-slate-800/80 text-slate-200 text-[10px] sm:text-[11px] font-medium border border-slate-700/60">
+                {isCustom ? (
+                  <Music className="w-3 h-3 text-sky-400 shrink-0" />
+                ) : (
+                  <Bell className="w-3 h-3 text-sky-400 shrink-0" />
+                )}
+                <span className="truncate max-w-[110px] sm:max-w-[150px]">{soundLabel}</span>
+                <span className="text-slate-400 text-[9px]">({formatOffset(activity.alarm.triggerOffsetMinutes)})</span>
                 <button
                   type="button"
-                  onClick={() => onTestSound(activity.alarm.soundType, activity.alarm.volume)}
-                  title="Testar som deste alarme"
-                  className="p-0.5 hover:text-indigo-900 rounded transition-colors"
+                  onClick={() => onTestSound(activity.alarm.soundType, activity.alarm.volume, activity.alarm.customAudioId)}
+                  title="Testar este som"
+                  className="p-0.5 hover:text-white rounded transition-colors cursor-pointer"
                 >
-                  <Play className="w-2.5 h-2.5 fill-indigo-600" />
+                  <Play className="w-2.5 h-2.5 fill-current text-sky-400" />
                 </button>
               </div>
             ) : (
-              <span className="inline-flex items-center gap-1 text-[10px] sm:text-[11px] text-slate-400">
+              <span className="inline-flex items-center gap-1 text-[10px] text-slate-500">
                 <BellOff className="w-3 h-3" />
                 Sem alarme
               </span>
             )}
 
             {activity.alarm.snoozedUntil && Date.now() < activity.alarm.snoozedUntil && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-[9px] sm:text-[10px] font-semibold border border-amber-200">
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[9px] font-semibold border border-amber-500/30">
                 Adiado até {new Date(activity.alarm.snoozedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </span>
             )}
@@ -184,16 +194,18 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
         {/* Actions */}
         <div className="flex items-center space-x-0.5 shrink-0 opacity-100 sm:opacity-80 sm:group-hover:opacity-100 transition-opacity">
           <button
+            type="button"
             onClick={() => onEdit(activity)}
             title="Editar Atividade"
-            className="p-1.5 sm:p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-slate-100 transition-colors"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
           >
             <Edit2 className="w-3.5 h-3.5" />
           </button>
           <button
+            type="button"
             onClick={() => onDelete(activity)}
             title="Excluir Atividade"
-            className="p-1.5 sm:p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 transition-colors cursor-pointer"
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>

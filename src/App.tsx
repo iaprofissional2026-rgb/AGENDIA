@@ -5,12 +5,13 @@ import { ActivityModal } from './components/ActivityModal';
 import { ActiveAlarmModal } from './components/ActiveAlarmModal';
 import { AlarmSettingsModal } from './components/AlarmSettingsModal';
 import { ConfirmDestructiveModal } from './components/ConfirmDestructiveModal';
+import { PWAInstallModal } from './components/PWAInstallModal';
+import { ThemeProvider, useTheme } from './context/ThemeContext';
 import { Activity, GoogleCalendarEvent, UserProfile, AlarmSoundType } from './types';
 import {
   initAuth,
   googleSignIn,
   logoutGoogle,
-  getAccessToken,
 } from './services/firebaseAuth';
 import {
   listGoogleCalendarEvents,
@@ -23,7 +24,9 @@ import { useAlarmManager } from './hooks/useAlarmManager';
 import { unlockAudioContext } from './services/soundService';
 import { Volume2, AlertTriangle, CheckCircle2, Info } from 'lucide-react';
 
-export default function App() {
+function AppContent() {
+  const { config, isFeminino, isMasculino } = useTheme();
+
   const [activities, setActivities] = useState<Activity[]>(() => loadActivities());
   const [selectedDate, setSelectedDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
@@ -36,6 +39,7 @@ export default function App() {
   const [isActivityModalOpen, setIsActivityModalOpen] = useState<boolean>(false);
   const [editingActivity, setEditingActivity] = useState<Activity | null>(null);
   const [isAlarmSettingsOpen, setIsAlarmSettingsOpen] = useState<boolean>(false);
+  const [isPwaModalOpen, setIsPwaModalOpen] = useState<boolean>(false);
 
   // Destructive Confirmation Modal state (Mandatory for Workspace Integration)
   const [confirmModal, setConfirmModal] = useState<{
@@ -95,7 +99,7 @@ export default function App() {
       const events = await listGoogleCalendarEvents(token, timeMin, timeMax);
       setGoogleEvents(events);
     } catch (err) {
-      console.error('Erro ao sincronizar eventos do Google Calendar:', err);
+      console.warn('Aviso ao sincronizar eventos do Google Calendar:', err);
     } finally {
       setIsSyncing(false);
     }
@@ -120,71 +124,78 @@ export default function App() {
         setGoogleEvents([]);
       }
     );
-
     return () => unsubscribe();
   }, [fetchGoogleEvents]);
 
-  // Unlock AudioContext on first user click anywhere
+  // Request notifications and unlock audio on initial user touch
   useEffect(() => {
-    const handleFirstInteraction = () => {
+    const handleInitialTouch = () => {
       unlockAudioContext();
       setAudioUnlocked(true);
-      window.removeEventListener('click', handleFirstInteraction);
-      window.removeEventListener('keydown', handleFirstInteraction);
+      window.removeEventListener('click', handleInitialTouch);
+      window.removeEventListener('touchstart', handleInitialTouch);
     };
 
-    window.addEventListener('click', handleFirstInteraction);
-    window.addEventListener('keydown', handleFirstInteraction);
+    window.addEventListener('click', handleInitialTouch);
+    window.addEventListener('touchstart', handleInitialTouch);
+
     return () => {
-      window.removeEventListener('click', handleFirstInteraction);
-      window.removeEventListener('keydown', handleFirstInteraction);
+      window.removeEventListener('click', handleInitialTouch);
+      window.removeEventListener('touchstart', handleInitialTouch);
     };
   }, []);
 
-  // Login handler
+  // Manual Google Calendar Login
   const handleLoginGoogle = async () => {
     setIsLoggingIn(true);
     try {
-      const res = await googleSignIn();
-      if (res) {
-        setUserProfile(res.profile);
-        showToast('Google Calendar conectado com sucesso!', 'success');
-        if (res.accessToken) {
-          await fetchGoogleEvents(res.accessToken);
-        }
+      const { user, accessToken } = await googleSignIn();
+      setUserProfile({
+        uid: user.uid,
+        displayName: user.displayName,
+        email: user.email,
+        photoURL: user.photoURL,
+      });
+      if (accessToken) {
+        await fetchGoogleEvents(accessToken);
       }
+      showToast('Conectado com sucesso ao Google Calendar!', 'success');
     } catch (err: unknown) {
-      console.error('Falha de login Google:', err);
-      showToast(
-        err instanceof Error ? err.message : 'Falha na autenticação com o Google.',
-        'error'
-      );
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      if (
+        errorMessage.includes('auth/popup-closed-by-user') ||
+        errorMessage.includes('popup-closed')
+      ) {
+        showToast('Login cancelado pelo usuário.', 'info');
+      } else {
+        showToast(`Erro ao autenticar no Google Calendar: ${errorMessage}`, 'error');
+      }
     } finally {
       setIsLoggingIn(false);
     }
   };
 
-  // Logout handler
+  // Logout Google
   const handleLogoutGoogle = async () => {
     try {
       await logoutGoogle();
       setUserProfile(null);
       setGoogleEvents([]);
       showToast('Desconectado do Google Calendar.', 'info');
-    } catch (err) {
-      console.error('Erro ao desconectar:', err);
+    } catch {
+      showToast('Erro ao desconectar.', 'error');
     }
   };
 
-  // Manual Sync trigger
+  // Manual Sync
   const handleManualSync = async () => {
-    const token = await getAccessToken();
-    if (token) {
-      await fetchGoogleEvents(token);
-      showToast('Google Calendar sincronizado!', 'success');
-    } else {
-      handleLoginGoogle();
+    const token = await (await import('./services/firebaseAuth')).getAccessToken();
+    if (!token) {
+      showToast('Faça login com sua conta Google primeiro.', 'info');
+      return;
     }
+    await fetchGoogleEvents(token);
+    showToast('Eventos do Google Calendar sincronizados!', 'success');
   };
 
   // Toggle activity status
@@ -193,67 +204,61 @@ export default function App() {
     const updated: Activity = {
       ...activity,
       status: newStatus,
-      alarm: {
-        ...activity.alarm,
-        // If re-opened, re-enable alarm if originally configured
-        dismissed: newStatus === 'concluida' ? true : false,
-      },
       updatedAt: Date.now(),
     };
-    handleUpdateActivity(updated);
+
+    setActivities((prev) => {
+      const next = prev.map((a) => (a.id === updated.id ? updated : a));
+      saveActivities(next);
+      return next;
+    });
+
     showToast(
-      newStatus === 'concluida' ? 'Atividade marcada como concluída!' : 'Atividade reaberta.',
+      newStatus === 'concluida'
+        ? `Atividade "${activity.title}" marcada como concluída!`
+        : `Atividade "${activity.title}" reaberta.`,
       'success'
     );
   };
 
-  // Open Create Modal
+  // Open modal for new activity
   const handleOpenNewModal = () => {
     setEditingActivity(null);
     setIsActivityModalOpen(true);
   };
 
-  // Open Edit Modal
+  // Open modal for editing
   const handleEditActivity = (activity: Activity) => {
     setEditingActivity(activity);
     setIsActivityModalOpen(true);
   };
 
-  // Delete Request (checks if destructive dialog needed)
+  // Confirm delete activity
   const handleDeleteActivity = (activity: Activity) => {
-    // If synced with Google Calendar, must show confirmation dialog as required by skill
-    if (activity.googleCalendarEventId) {
-      setConfirmModal({
-        isOpen: true,
-        actionType: 'delete',
-        activity,
-      });
-    } else {
-      // Local only delete
-      setActivities((prev) => {
-        const next = prev.filter((a) => a.id !== activity.id);
-        saveActivities(next);
-        return next;
-      });
-      showToast('Atividade excluída.', 'info');
-    }
+    setConfirmModal({
+      isOpen: true,
+      actionType: 'delete',
+      activity,
+    });
   };
 
-  // Confirm destructive action (Delete or Update in Google Calendar)
+  // Execute Destructive Action
   const handleConfirmDestructiveAction = async () => {
     const { actionType, activity, pendingUpdateData } = confirmModal;
     if (!activity) return;
 
     setIsProcessingDestructive(true);
-    const token = await getAccessToken();
 
     try {
       if (actionType === 'delete') {
-        if (activity.googleCalendarEventId && token) {
-          try {
-            await deleteGoogleCalendarEvent(token, activity.googleCalendarEventId);
-          } catch (e) {
-            console.warn('Google Calendar delete error:', e);
+        if (activity.googleCalendarEventId) {
+          const token = await (await import('./services/firebaseAuth')).getAccessToken();
+          if (token) {
+            try {
+              await deleteGoogleCalendarEvent(token, activity.googleCalendarEventId);
+            } catch (e) {
+              console.warn('Google event delete skipped/failed:', e);
+            }
           }
         }
 
@@ -263,52 +268,58 @@ export default function App() {
           return next;
         });
 
-        showToast('Atividade excluída com sucesso da sua agenda.', 'success');
+        showToast(`Atividade "${activity.title}" excluída com sucesso.`, 'success');
       } else if (actionType === 'update' && pendingUpdateData) {
-        let googleEvent = null;
-        if (activity.googleCalendarEventId && token) {
-          try {
-            googleEvent = await updateGoogleCalendarEvent(token, activity.googleCalendarEventId, {
-              ...activity,
-              ...pendingUpdateData,
-            });
-          } catch (e) {
-            console.warn('Google Calendar update error:', e);
+        let googleEvent: GoogleCalendarEvent | null = null;
+        if (activity.googleCalendarEventId) {
+          const token = await (await import('./services/firebaseAuth')).getAccessToken();
+          if (token) {
+            try {
+              googleEvent = await updateGoogleCalendarEvent(
+                token,
+                activity.googleCalendarEventId,
+                {
+                  ...activity,
+                  ...pendingUpdateData,
+                }
+              );
+            } catch (e) {
+              console.warn('Google event update failed:', e);
+            }
           }
         }
 
-        const updated: Activity = {
+        const updatedActivity: Activity = {
           ...activity,
           ...pendingUpdateData,
-          googleCalendarEventId: googleEvent ? googleEvent.id : activity.googleCalendarEventId,
+          googleCalendarEventId: googleEvent?.id || activity.googleCalendarEventId,
           googleCalendarLink: googleEvent?.htmlLink || activity.googleCalendarLink,
           updatedAt: Date.now(),
         };
 
-        handleUpdateActivity(updated);
-        showToast('Atividade e Google Calendar atualizados!', 'success');
-      }
+        setActivities((prev) => {
+          const next = prev.map((a) => (a.id === updatedActivity.id ? updatedActivity : a));
+          saveActivities(next);
+          return next;
+        });
 
-      setConfirmModal({ isOpen: false, actionType: 'delete', activity: null });
+        showToast(`Atividade "${updatedActivity.title}" atualizada com sucesso!`, 'success');
+      }
     } catch (err: unknown) {
-      console.error(err);
-      showToast('Falha na sincronização com o Google Calendar.', 'error');
+      showToast(err instanceof Error ? err.message : 'Erro ao processar ação.', 'error');
     } finally {
       setIsProcessingDestructive(false);
+      setConfirmModal({ isOpen: false, actionType: 'delete', activity: null });
     }
   };
 
-  // Save Activity (Create or Update)
+  // Save or update activity from modal
   const handleSaveActivity = async (
     activityData: Omit<Activity, 'id' | 'createdAt' | 'updatedAt'>,
     syncToGoogle: boolean
   ) => {
-    const token = await getAccessToken();
-
     if (editingActivity) {
-      // Editing existing
-      if (editingActivity.googleCalendarEventId && syncToGoogle) {
-        // Requires user confirmation dialog before destructive Google Calendar update!
+      if (editingActivity.googleCalendarEventId) {
         setConfirmModal({
           isOpen: true,
           actionType: 'update',
@@ -318,54 +329,45 @@ export default function App() {
         return;
       }
 
-      // If user decided to add sync now
-      let googleEvent = null;
-      if (!editingActivity.googleCalendarEventId && syncToGoogle && token) {
-        try {
-          const tempAct: Activity = {
-            ...editingActivity,
-            ...activityData,
-          };
-          googleEvent = await createGoogleCalendarEvent(token, tempAct);
-        } catch (e) {
-          console.warn('Erro ao criar evento Google:', e);
-        }
-      }
-
-      const updated: Activity = {
+      const updatedActivity: Activity = {
         ...editingActivity,
         ...activityData,
-        googleCalendarEventId: googleEvent ? googleEvent.id : editingActivity.googleCalendarEventId,
-        googleCalendarLink: googleEvent?.htmlLink || editingActivity.googleCalendarLink,
         updatedAt: Date.now(),
       };
 
-      handleUpdateActivity(updated);
-      showToast('Atividade atualizada com sucesso!', 'success');
-    } else {
-      // Create new activity
-      const newId = 'act_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
-      let googleEvent = null;
+      setActivities((prev) => {
+        const next = prev.map((a) => (a.id === updatedActivity.id ? updatedActivity : a));
+        saveActivities(next);
+        return next;
+      });
 
-      if (syncToGoogle && token) {
-        try {
-          const tempAct: Activity = {
-            id: newId,
-            ...activityData,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-          };
-          googleEvent = await createGoogleCalendarEvent(token, tempAct);
-        } catch (err) {
-          console.error('Falha ao sincronizar com Google Calendar:', err);
-          showToast('Atividade criada localmente, mas não foi possível enviar ao Google Calendar.', 'info');
+      showToast(`Atividade "${updatedActivity.title}" atualizada com sucesso!`, 'success');
+    } else {
+      let googleEvent: GoogleCalendarEvent | null = null;
+      if (syncToGoogle && userProfile) {
+        const token = await (await import('./services/firebaseAuth')).getAccessToken();
+        if (token) {
+          try {
+            googleEvent = await createGoogleCalendarEvent(
+              token,
+              {
+                ...activityData,
+                id: 'temp',
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+              }
+            );
+          } catch (e) {
+            console.warn('Falha ao criar evento no Google Calendar:', e);
+            showToast('Aviso: Atividade salva localmente, falha no Google Calendar.', 'info');
+          }
         }
       }
 
       const newActivity: Activity = {
-        id: newId,
         ...activityData,
-        googleCalendarEventId: googleEvent ? googleEvent.id : undefined,
+        id: 'act_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+        googleCalendarEventId: googleEvent?.id || undefined,
         googleCalendarLink: googleEvent?.htmlLink || undefined,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -414,7 +416,6 @@ export default function App() {
       }
     }
 
-    // Pre-populate modal
     setEditingActivity({
       id: '',
       title: evt.summary || 'Evento do Google Calendar',
@@ -442,12 +443,16 @@ export default function App() {
   };
 
   // Trigger test simulation
-  const handleTriggerTestAlarm = (soundType: AlarmSoundType, volume: number) => {
+  const handleTriggerTestAlarm = (
+    soundType: AlarmSoundType,
+    volume: number,
+    customAudioId?: string
+  ) => {
     setIsAlarmSettingsOpen(false);
     const sampleActivity: Activity = {
-      id: 'test_simulation',
+      id: 'test_simulation_' + Date.now(),
       title: 'Teste de Alarme Sonoro',
-      description: 'Demonstração do disparo do alarme sonoro configurável.',
+      description: 'Demonstração do disparo do alarme com barra de notificação Android e música.',
       date: new Date().toISOString().split('T')[0],
       startTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       endTime: '',
@@ -457,6 +462,8 @@ export default function App() {
       alarm: {
         enabled: true,
         soundType,
+        customAudioId,
+        customAudioName: customAudioId ? 'Música do Celular' : undefined,
         volume,
         triggerOffsetMinutes: 0,
       },
@@ -464,16 +471,16 @@ export default function App() {
       updatedAt: Date.now(),
     };
 
-    // Trigger through the hook
-    testAlarmSound(soundType, volume);
-    // Open Active Alarm Modal simulation
-    // We can update the state to show the modal
+    testAlarmSound(soundType, volume, customAudioId);
     handleUpdateActivity(sampleActivity);
   };
 
   return (
-    <div className="min-h-screen bg-slate-100/70 text-slate-800 flex flex-col font-sans">
-      
+    <div
+      className={`min-h-screen ${
+        isFeminino ? 'bg-[#150a12] text-rose-100' : 'bg-slate-950 text-slate-100'
+      } flex flex-col font-sans transition-colors duration-300`}
+    >
       {/* Top Navbar */}
       <Navbar
         userProfile={userProfile}
@@ -483,28 +490,29 @@ export default function App() {
         onOpenNewActivityModal={handleOpenNewModal}
         onOpenAlarmSettings={() => setIsAlarmSettingsOpen(true)}
         onSyncGoogleCalendar={handleManualSync}
+        onOpenPwaModal={() => setIsPwaModalOpen(true)}
         isSyncing={isSyncing}
         activitiesCount={activities.length}
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        
+      <main className="flex-1 max-w-7xl w-full mx-auto px-2.5 sm:px-4 lg:px-8 py-3.5 sm:py-5">
         {/* Unlocked audio banner if needed */}
         {!audioUnlocked && (
-          <div className="mb-4 p-3 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-800 text-xs flex items-center justify-between shadow-2xs">
+          <div className="mb-3 p-2.5 sm:p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 text-xs flex items-center justify-between shadow-sm">
             <div className="flex items-center space-x-2">
-              <Volume2 className="w-4 h-4 text-indigo-600 shrink-0" />
+              <Volume2 className="w-4 h-4 text-sky-400 shrink-0" />
               <span>
-                <strong>Áudio Pronto:</strong> Clique em qualquer ponto da tela para liberar o sintetizador de alarmes sonoros.
+                <strong>Áudio do Dispositivo:</strong> Toque para liberar o sintetizador e reprodutor de músicas do celular.
               </span>
             </div>
             <button
+              type="button"
               onClick={() => {
                 unlockAudioContext();
                 setAudioUnlocked(true);
               }}
-              className="px-2.5 py-1 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+              className={`px-2.5 py-1 text-xs font-semibold rounded-lg shrink-0 cursor-pointer ${config.primaryBtn}`}
             >
               Ativar Som
             </button>
@@ -528,9 +536,19 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-500">
-        <p className="max-w-7xl mx-auto px-4">
-          Agendador de Atividades • Sintetizador de Alarme Web Audio e Integração com Google Calendar API
+      <footer className="bg-slate-950 border-t border-slate-800/80 py-3 text-center text-xs text-slate-500">
+        <p className="max-w-7xl mx-auto px-4 flex flex-wrap items-center justify-center gap-2">
+          <span>Agendador de Atividades Pro</span>
+          <span>•</span>
+          <button
+            type="button"
+            onClick={() => setIsPwaModalOpen(true)}
+            className="text-amber-400 hover:underline cursor-pointer"
+          >
+            Instalar no Celular / APK
+          </button>
+          <span>•</span>
+          <span>Google Calendar API & Sintetizador de Alarme</span>
         </p>
       </footer>
 
@@ -564,6 +582,12 @@ export default function App() {
         onTriggerTestAlarm={handleTriggerTestAlarm}
         notificationsAllowed={notificationsAllowed}
         onRequestNotifications={requestNotificationPermission}
+        onOpenPwaModal={() => setIsPwaModalOpen(true)}
+      />
+
+      <PWAInstallModal
+        isOpen={isPwaModalOpen}
+        onClose={() => setIsPwaModalOpen(false)}
       />
 
       <ConfirmDestructiveModal
@@ -578,24 +602,31 @@ export default function App() {
 
       {/* Floating Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 animate-in slide-in-from-bottom-5 duration-200">
+        <div className="fixed bottom-4 right-4 z-50 animate-fade-in max-w-sm">
           <div
-            className={`px-4 py-3 rounded-xl shadow-lg border text-xs font-semibold flex items-center space-x-2 ${
+            className={`px-3.5 py-2.5 rounded-xl shadow-xl border text-xs font-semibold flex items-center space-x-2 ${
               toastMessage.type === 'success'
-                ? 'bg-emerald-900 text-emerald-100 border-emerald-700'
+                ? 'bg-emerald-950 text-emerald-100 border-emerald-700'
                 : toastMessage.type === 'error'
-                ? 'bg-rose-900 text-rose-100 border-rose-700'
+                ? 'bg-rose-950 text-rose-100 border-rose-700'
                 : 'bg-slate-900 text-slate-100 border-slate-700'
             }`}
           >
-            {toastMessage.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
-            {toastMessage.type === 'error' && <AlertTriangle className="w-4 h-4 text-rose-400" />}
-            {toastMessage.type === 'info' && <Info className="w-4 h-4 text-indigo-400" />}
-            <span>{toastMessage.text}</span>
+            {toastMessage.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />}
+            {toastMessage.type === 'error' && <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />}
+            {toastMessage.type === 'info' && <Info className="w-4 h-4 text-sky-400 shrink-0" />}
+            <span className="leading-tight">{toastMessage.text}</span>
           </div>
         </div>
       )}
-
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <ThemeProvider>
+      <AppContent />
+    </ThemeProvider>
   );
 }

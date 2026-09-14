@@ -4,11 +4,26 @@ export type PriorityType = 'baixa' | 'media' | 'alta';
 
 export type StatusType = 'pendente' | 'em_andamento' | 'concluida';
 
-export type AlarmSoundType = 'digital' | 'chime' | 'melodic' | 'urgent' | 'gong';
+export type BuiltInSoundType = 'digital' | 'chime' | 'melodic' | 'urgent' | 'gong';
+export type AlarmSoundType = BuiltInSoundType | 'custom';
+
+export type ThemeMode = 'masculino' | 'feminino' | 'neutro';
+
+export interface CustomAudioTrack {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  createdAt: number;
+  duration?: number;
+  blob?: Blob;
+}
 
 export interface AlarmConfig {
   enabled: boolean;
   soundType: AlarmSoundType;
+  customAudioId?: string;
+  customAudioName?: string;
   volume: number; // 0 to 1
   triggerOffsetMinutes: number; // 0 = at time, 5 = 5 min before, etc.
   snoozedUntil?: number; // timestamp ms

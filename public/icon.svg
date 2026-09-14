@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e1b4b" />
+      <stop offset="50%" stop-color="#312e81" />
+      <stop offset="100%" stop-color="#4338ca" />
+    </linearGradient>
+    <linearGradient id="bellGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24" />
+      <stop offset="100%" stop-color="#f59e0b" />
+    </linearGradient>
+    <linearGradient id="glowGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#6366f1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Base Rounded Rectangle -->
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
+
+  <!-- Outer Subtle Ring -->
+  <circle cx="256" cy="256" r="190" fill="none" stroke="url(#glowGrad)" stroke-width="8" stroke-dasharray="16 12" opacity="0.4" />
+
+  <!-- Calendar Body Shape -->
+  <rect x="116" y="140" width="280" height="250" rx="32" fill="#ffffff" opacity="0.96" />
+  
+  <!-- Calendar Header Band -->
+  <path d="M 116 172 C 116 154.3 130.3 140 148 140 L 364 140 C 381.7 140 396 154.3 396 172 L 396 215 L 116 215 Z" fill="#4f46e5" />
+
+  <!-- Calendar Pins -->
+  <rect x="175" y="115" width="22" height="48" rx="11" fill="#cbd5e1" />
+  <rect x="315" y="115" width="22" height="48" rx="11" fill="#cbd5e1" />
+
+  <!-- Calendar Grid Lines / Dots -->
+  <circle cx="170" cy="265" r="14" fill="#94a3b8" />
+  <circle cx="230" cy="265" r="14" fill="#94a3b8" />
+  <circle cx="290" cy="265" r="14" fill="#94a3b8" />
+  <circle cx="350" cy="265" r="14" fill="#94a3b8" />
+
+  <circle cx="170" cy="325" r="14" fill="#94a3b8" />
+  <circle cx="230" cy="325" r="14" fill="#94a3b8" />
+  <circle cx="290" cy="325" r="14" fill="#94a3b8" />
+  <circle cx="350" cy="325" r="14" fill="#94a3b8" />
+
+  <!-- Alarm Bell Badge on Bottom Right -->
+  <circle cx="370" cy="370" r="92" fill="#0f172a" />
+  <circle cx="370" cy="370" r="82" fill="url(#bellGrad)" />
+
+  <!-- Bell Shape in Badge -->
+  <path d="M 370 320 C 354 320 342 332 342 348 L 342 372 L 330 384 L 330 392 L 410 392 L 410 384 L 398 372 L 398 348 C 398 332 386 320 370 320 Z" fill="#1e293b" />
+  <circle cx="370" cy="404" r="8" fill="#1e293b" />
+  <circle cx="370" cy="314" r="5" fill="#1e293b" />
+
+  <!-- Sound Waves from Bell -->
+  <path d="M 420 345 C 428 355 428 370 420 380" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round" />
+  <path d="M 320 345 C 312 355 312 370 320 380" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round" />
+</svg>
